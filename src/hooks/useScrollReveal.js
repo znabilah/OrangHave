@@ -1,24 +1,29 @@
 import { useEffect } from 'react';
 
 /**
- * Scroll reveal: elements inside the given sections glide up and fade in
- * EVERY time they scroll into view (down or back up), for as long as the
- * page is open — no reload needed.
+ * Scroll reveal for the Home sections (Interactive Story, Cross-Border Impact,
+ * Wildlife Profiles, Take Action).
  *
- *  - every top-level block of a section (headers, panels, charts) slides up
+ * Elements move in EVERY time they scroll into view — scrolling down or back
+ * up — for as long as the page is open. No reload needed.
+ *
+ *  - header text (eyebrow, title, intro) rises up one line after another
+ *  - each big block of a section (panels, maps, charts) slides in,
+ *    alternating from the left and from the right
  *  - the items of grids and lists (cards, chips, rows) zoom in with a stagger
  *
- * When an element has left the screen completely it quietly resets, so it
- * can play again next time. Respects reduced motion.
+ * Once an element has completely left the screen it quietly resets, so it
+ * plays again the next time it comes into view.
  */
-const BLOCKS = ':scope > div > *';
+const ROOT = ':scope > div:not([aria-hidden="true"])';
+const HEADER_TEXT = `${ROOT} > header :is(p, h1, h2, h3)`;
+const BLOCKS = `${ROOT} > :not(header):not(style):not(script)`;
 const ITEMS = '.grid > *, ol > li, ul > li';
-const SHOW_AT = 0.12; // share of the element that must be visible to play
+const SHOW_AT = 0.1; // share of the element that must be visible to play
 
 export default function useScrollReveal(sectionIds) {
   useEffect(() => {
     if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
 
     const io = new IntersectionObserver(
       (entries) => {
@@ -34,18 +39,12 @@ export default function useScrollReveal(sectionIds) {
       { threshold: [0, SHOW_AT] }
     );
 
-    let firstScan = true;
-    const prepare = (el, zoom, delay) => {
+    const prepare = (el, kind, delay) => {
+      if (el.closest('[aria-hidden="true"]')) return; // skip decorative layers
       if (!el.classList.contains('reveal')) {
         el.classList.add('reveal');
-        if (zoom) el.classList.add('reveal-zoom');
+        el.dataset.rv = kind;
         el.style.setProperty('--rd', `${delay}ms`);
-        // Already on screen at load: show straight away (no jump on first paint).
-        // Content that appears later (new story page, "See all") animates in instead.
-        if (firstScan) {
-          const r = el.getBoundingClientRect();
-          if (r.top < window.innerHeight && r.bottom > 0) el.classList.add('reveal-in');
-        }
       }
       io.observe(el);
     };
@@ -54,22 +53,27 @@ export default function useScrollReveal(sectionIds) {
       sectionIds.forEach((id) => {
         const section = document.getElementById(id);
         if (!section) return;
-        section.querySelectorAll(BLOCKS).forEach((el) => prepare(el, false, 0));
+
+        section.querySelectorAll(HEADER_TEXT).forEach((el, i) => prepare(el, 'up', Math.min(i, 5) * 110));
+
+        section.querySelectorAll(BLOCKS).forEach((el, i) => prepare(el, i % 2 === 0 ? 'left' : 'right', 0));
+
         section.querySelectorAll(ITEMS).forEach((el) => {
+          if (el.classList.contains('reveal')) return;
           const i = Array.prototype.indexOf.call(el.parentElement.children, el);
-          prepare(el, true, Math.min(i, 8) * 80);
+          prepare(el, 'zoom', 120 + Math.min(i, 8) * 90);
         });
       });
-      firstScan = false;
     };
 
     // Wait a tick so the sections have rendered their content
     const timer = setTimeout(scan, 50);
 
-    // Pick up content that appears later (e.g. "See all species", story pages)
+    // Pick up content that appears later (data loading, "See all", story pages)
+    let moTimer;
     const mo = new MutationObserver(() => {
-      clearTimeout(mo.t);
-      mo.t = setTimeout(scan, 120);
+      clearTimeout(moTimer);
+      moTimer = setTimeout(scan, 120);
     });
     sectionIds.forEach((id) => {
       const section = document.getElementById(id);
@@ -78,7 +82,7 @@ export default function useScrollReveal(sectionIds) {
 
     return () => {
       clearTimeout(timer);
-      clearTimeout(mo.t);
+      clearTimeout(moTimer);
       mo.disconnect();
       io.disconnect();
     };
